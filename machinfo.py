@@ -11,16 +11,20 @@
 
 # this script will need to require bind-utils for reverse lookups to work
 
+elasticsearch_url = "http://localhost:9200"
+
 import simplejson
+import urllib2
 import sys
 import os
 import re
 import subprocess
-from time import sleep
+from time import sleep, localtime, strftime
 from datetime import datetime
 from shlex import split
 
 timeout = 5
+recdate = strftime("%d%m%Y", localtime())
 
 def sanitize(txt):
 	# reference: http://www.degraeve.com/reference/specialcharacters.php
@@ -143,16 +147,16 @@ for i in range(1,len(nets)):
 	for x in nets[i].split('\n'):
 		s = re.compile(' link/ether ')
 		if re.search(s, x):
-			sysdata[sysid]['NICs'][ifname]['macaddr'] = x.split()[1]
+			sysdata['interfaces'][ifname]['macaddr'] = x.split()[1]
 		s = re.compile(' inet ')
 		if re.search(s, x):
 			# FIXME: does ipv4 ever have multiple values on the same NIC?
-			sysdata[sysid]['NICs'][ifname]['ipv4_ipaddr'] = x.split()[1]
-			sysdata[sysid]['NICs'][ifname]['broadcast'] = x.split()[3]
+			sysdata['interfaces'][ifname]['ipv4_ipaddr'] = x.split()[1]
+			sysdata['interfaces'][ifname]['broadcast'] = x.split()[3]
 		s = re.compile(' inet6 ')
 		if re.search(s, x):
 			# FIXME: does ipv6 ever have multiple values on the same NIC?
-			sysdata[sysid]['NICs'][ifname]['ipv6_ipaddr'] = x.split()[1]
+			sysdata['interfaces'][ifname]['ipv6_ipaddr'] = x.split()[1]
 
 # get routes
 data = runcom('ip route show')
@@ -160,7 +164,7 @@ dp = data.split('\n')
 rlist = []
 for i in range(0,len(dp)):
 	rlist.append(dp[i])
-sysdata[sysid]['routes'] = rlist
+sysdata['routes'] = rlist
 
 # get iptables rules
 data = runcom('iptables -L')
@@ -174,21 +178,21 @@ for i in dp:
 		if len(x) > 2:
 			for y in range(2,len(x)):
 				clist.append(x[y])
-				#sysdata[sysid]['iptables'][chain][y-2] = x[y]
-			sysdata[sysid]['iptables'][chain] = clist
+				#sysdata['iptables'][chain][y-2] = x[y]
+			sysdata['iptables'][chain] = clist
 
 # get system info
 
 # get timezone
-sysdata[sysid]['timezone'] = runcom("/bin/date '+%Z'")
-sysdata[sysid]['hostname'] = runcom("uname -n")
+sysdata['timezone'] = runcom("/bin/date '+%Z'")
+sysdata['hostname'] = runcom("uname -n")
 
 # reverse lookups of interfaces
 lookups = []
 if which('dig'):
-	for iface in sysdata[sysid]['NICs'].keys():
-		if sysdata[sysid]['NICs'][iface]['ipv4_ipaddr']:
-			rcom = "%s +noall +answer -x %s" % (which('dig'),sysdata[sysid]['NICs'][iface]['ipv4_ipaddr'][0].split("/")[0])
+	for iface in sysdata['NICs'].keys():
+		if sysdata['NICs'][iface]['ipv4_ipaddr']:
+			rcom = "%s +noall +answer -x %s" % (which('dig'),sysdata['NICs'][iface]['ipv4_ipaddr'][0].split("/")[0])
 			r = runcom(rcom)
 			if r:
 				lookups.append(r.split()[4])
@@ -199,21 +203,21 @@ lookups = filter(None, lookups)
 if len(lookups) == 0:
 	lookups.append('ERROR: No reverse addresses found!')
 
-sysdata[sysid]['reverse_lookups'] = lookups
+sysdata['reverse_lookups'] = lookups
 
 # FIXME - find other version file info for other distros
 version_files = ["/etc/redhat-release",]
 for i in version_files:
 	x = readfile(i)
 	if x:
-		sysdata[sysid]['os_version'] = x.strip()
+		sysdata['os_version'] = x.strip()
 		break
 
 uname_a = runcom('uname -a')
 x = re.split(' x86_64 | i386 ', uname_a)
-sysdata[sysid]['kernel_version'] = x[0].split(sysdata[sysid]['hostname'])[1].strip()
-sysdata[sysid]['hardware-platform'] = runcom('uname -i')
-sysdata[sysid]['processor'] = runcom('uname -i')
+sysdata['kernel_version'] = x[0].split(sysdata['hostname'])[1].strip()
+sysdata['hardware-platform'] = runcom('uname -i')
+sysdata['processor'] = runcom('uname -i')
 
 # collect CPU information
 data = readfile('/proc/cpuinfo')
@@ -224,24 +228,24 @@ for i in dp:
         	#if len(pl) > 0:
                 for x in i.split('\n'):
                         xp = x.split(":")
-                        sysdata[sysid]['CPUs'][pl[2]][xp[0].strip()] =  xp[1].strip()
+                        sysdata['CPUs'][pl[2]][xp[0].strip()] =  xp[1].strip()
 
 # collect memory information
 data = readfile('/proc/meminfo')
 for i in data.split('\n'):
 	if i:
 		l = i.split(':')
-		sysdata[sysid]['memory'][l[0]] = l[1].strip()
+		sysdata['memory'][l[0]] = l[1].strip()
 
 data = readfile('/proc/uptime')
 d = data.split()
-sysdata[sysid]['seconds_uptime'] = d[0].strip()
-sysdata[sysid]['seconds_idle'] = d[1].strip()
+sysdata['seconds_uptime'] = d[0].strip()
+sysdata['seconds_idle'] = d[1].strip()
 
 if which('lspci'):
-	sysdata[sysid]['device_info'] = runcom('lspci')
+	sysdata['device_info'] = runcom('lspci')
 else:
-	sysdata[sysid]['device_info'] = 'ERROR: lspci not found'
+	sysdata['device_info'] = 'ERROR: lspci not found'
 
 crondir = '/var/spool/cron'
 for root, subFolders, files in os.walk(crondir):
@@ -249,21 +253,28 @@ for root, subFolders, files in os.walk(crondir):
 		c = []
 		cronfile = "%s/%s" % (crondir,file)
 		c = sanitize(readfile(cronfile)).split('\n')
-		sysdata[sysid]['cron'][file] = c
+		sysdata['cron'][file] = c
 
 data = sanitize(runcom('w'))
-sysdata[sysid]['who'] = data
+sysdata['who'] = data
 
 data = sanitize(runcom('last'))
-sysdata[sysid]['last'] = data
+sysdata['last'] = data
 
 data = sanitize(runcom('df -h'))
-sysdata[sysid]['filesystem_info'] = data
+sysdata['filesystem_info'] = data
 
 data = runcom('rpm -qa --qf "%{NAME} %{VERSION} %{RELEASE}\n"').split('\n')
 for i in sorted(data):
 	n = i.split()
-	sysdata[sysid]['rpms'][n[0]]['version'] = n[1]
-	sysdata[sysid]['rpms'][n[0]]['release'] = n[2]
+	sysdata['rpms'][n[0]]['version'] = n[1]
+	sysdata['rpms'][n[0]]['release'] = n[2]
 
-print simplejson.dumps(sysdata, sort_keys=True, indent=2)
+#print simplejson.dumps(sysdata, sort_keys=True, indent=2)
+url = "%s/machinfo/%s/%s" % (elasticsearch_url, recdate, sysid)
+data = simplejson.dumps(sysdata, sort_keys=True, indent=2)
+req = urllib2.Request(url, data, {'Content-Type': 'application/json'})
+f = urllib2.urlopen(req)
+response = f.read()
+f.close()
+#print response
