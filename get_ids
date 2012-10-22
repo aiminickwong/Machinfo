@@ -1,0 +1,22 @@
+#!/usr/bin/env python
+import urllib2
+import simplejson as json
+import sys
+
+testres = len(sys.argv)
+if testres < 2:
+ sys.exit('Usage: ' + sys.argv[0] + ' <DDMMYYYY>')
+else:
+ rdate = sys.argv[1]
+
+url = 'http://localhost:9200/machinfo/%s/_search?q=*:*&fields=hostname&pretty=true' % (rdate)
+req = urllib2.Request(url)
+f = urllib2.urlopen(req)
+response = f.read()
+f.close()
+#print response
+
+import simplejson as json
+result_object = json.loads(response)["hits"]["hits"]
+for x in range(0,len(result_object)):
+	print result_object[x]['_id']
